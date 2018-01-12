@@ -56,7 +56,8 @@ def _read_classes(csv_reader):
     return result
 
 
-def _read_annotations(csv_reader, classes):
+def _read_annotations(csv_reader, classes, base_dir=None):
+    base_dir = base_dir or ''
     result = {}
     for line, row in enumerate(csv_reader):
         try:
@@ -64,6 +65,7 @@ def _read_annotations(csv_reader, classes):
         except ValueError:
             raise_from(ValueError('line {}: format should be \'img_file,x1,y1,x2,y2,class_name\' or \'img_file,,,,,\''.format(line)), None)
 
+        img_file = os.path.join(base_dir, img_file)
         if img_file not in result:
             result[img_file] = []
 
@@ -106,18 +108,15 @@ def _open_for_csv(path):
 class CSVGenerator(Generator):
     def __init__(
         self,
-        csv_data_file,
+        *csv_data_files,
         csv_class_file,
-        base_dir=None,
+        base_dirs=None,
         **kwargs
     ):
         self.image_names = []
         self.image_data  = {}
-        self.base_dir    = base_dir
-
-        # Take base_dir from annotations file if not explicitly specified.
-        if self.base_dir is None:
-            self.base_dir = os.path.dirname(csv_data_file)
+        base_dirs = base_dirs or [None] * len(csv_data_files)
+        base_dirs = [dir or os.path.dirname(csv) for csv, dir in zip(csv_data_files, base_dirs)]
 
         # parse the provided class file
         try:
@@ -131,17 +130,19 @@ class CSVGenerator(Generator):
             self.labels[value] = key
 
         # csv with img_path, x1, y1, x2, y2, class_name
-        try:
-            with _open_for_csv(csv_data_file) as file:
-                self.image_data = _read_annotations(csv.reader(file, delimiter=','), self.classes)
-        except ValueError as e:
-            raise_from(ValueError('invalid CSV annotations file: {}: {}'.format(csv_data_file, e)), None)
+        for csv_data_file, base_dir in zip(csv_data_files, base_dirs):
+            try:
+                with _open_for_csv(csv_data_file) as file:
+                    image_data = _read_annotations(csv.reader(file, delimiter=','), self.classes, base_dir)
+                    self.image_data.update(image_data)
+            except ValueError as e:
+                raise_from(ValueError('invalid CSV annotations file: {}: {}'.format(csv_data_file, e)), None)
         self.image_names = list(self.image_data.keys())
 
         super(CSVGenerator, self).__init__(**kwargs)
 
     def image_path(self, image_index):
-        return os.path.join(self.base_dir, self.image_names[image_index])
+        return self.image_names[image_index]
 
     def image_aspect_ratio(self, image_index):
         # PIL is fast for metadata
