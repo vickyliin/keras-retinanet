@@ -21,6 +21,7 @@ import time
 import warnings
 
 import keras
+from keras.preprocessing.image import ImageDataGenerator
 
 from ..utils.image import preprocess_image, resize_image, random_transform
 from ..utils.anchors import anchor_targets_bbox
@@ -29,15 +30,15 @@ from ..utils.anchors import anchor_targets_bbox
 class Generator(object):
     def __init__(
         self,
-        image_data_generator,
-        batch_size=1,
-        group_method='ratio',  # one of 'none', 'random', 'ratio'
+        batch_size,
+        group_method,  # one of 'none', 'random', 'ratio'
+        image_min_side,
+        image_max_side,
         shuffle_groups=True,
-        image_min_side=600,
-        image_max_side=1024,
+        image_data_generator=None,
         seed=None
     ):
-        self.image_data_generator = image_data_generator
+        self.image_data_generator = image_data_generator or ImageDataGenerator()
         self.batch_size           = int(batch_size)
         self.group_method         = group_method
         self.shuffle_groups       = shuffle_groups
