@@ -27,7 +27,11 @@ class SimpleGenerator(Generator):
         self.annotations_group = annotations_group
         self.num_classes_      = num_classes
         self.image             = image
-        super(SimpleGenerator, self).__init__(ImageDataGenerator(), group_method='none', shuffle_groups=False)
+        super().__init__(image_min_side=300, 
+                         image_max_side=1024, 
+                         group_method='none', 
+                         shuffle_groups=False,
+                         batch_size=1)
 
     def num_classes(self):
         return self.num_classes_
