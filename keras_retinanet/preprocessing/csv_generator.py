@@ -140,18 +140,6 @@ class CSVGenerator(Generator):
 
         super(CSVGenerator, self).__init__(**kwargs)
 
-    def size(self):
-        return len(self.image_names)
-
-    def num_classes(self):
-        return max(self.classes.values()) + 1
-
-    def name_to_label(self, name):
-        return self.classes[name]
-
-    def label_to_name(self, label):
-        return self.labels[label]
-
     def image_path(self, image_index):
         return os.path.join(self.base_dir, self.image_names[image_index])
 

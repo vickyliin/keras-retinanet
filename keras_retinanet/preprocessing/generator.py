@@ -38,7 +38,7 @@ class Generator(object):
         image_data_generator=None,
         seed=None
     ):
-        self.image_data_generator = image_data_generator or ImageDataGenerator()
+        self.image_data_generator = image_data_generator
         self.batch_size           = int(batch_size)
         self.group_method         = group_method
         self.shuffle_groups       = shuffle_groups
@@ -55,16 +55,16 @@ class Generator(object):
         self.group_images()
 
     def size(self):
-        raise NotImplementedError('size method not implemented')
+        return len(self.image_names)
 
     def num_classes(self):
-        raise NotImplementedError('num_classes method not implemented')
+        return max(self.classes.values()) + 1
 
     def name_to_label(self, name):
-        raise NotImplementedError('name_to_label method not implemented')
+        return self.classes[name]
 
     def label_to_name(self, label):
-        raise NotImplementedError('label_to_name method not implemented')
+        return self.labels[label]
 
     def image_aspect_ratio(self, image_index):
         raise NotImplementedError('image_aspect_ratio method not implemented')
@@ -119,7 +119,9 @@ class Generator(object):
             image = self.preprocess_image(image)
 
             # randomly transform both image and annotations
-            image, annotations = random_transform(image, annotations, self.image_data_generator)
+            if self.image_data_generator:
+                image, annotations = random_transform(image, annotations, 
+                                                      self.image_data_generator)
 
             # resize image
             image, image_scale = self.resize_image(image)
