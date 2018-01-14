@@ -4,9 +4,8 @@ from .generator import Generator
 from ..utils.image import read_image_bgr
 
 class InputGenerator(Generator):
-    def __init__(self, image_names, base_dir=None, **kwargs):
-        self.image_names = image_names
-        self.base_dir = base_dir or ''
+    def __init__(self, image_names, **kwargs):
+        self.image_names = np.array(image_names)
         super().__init__(shuffle_groups=False, 
                          group_method='none',
                          image_data_generator=None, 
@@ -19,10 +18,15 @@ class InputGenerator(Generator):
         return np.ones([1, 1])
 
     def image_path(self, image_index):
-        return os.path.join(self.base_dir, self.image_names[image_index])
+        return self.image_names[image_index]
 
     def filter_annotations(self, image_group, annotations_group, group):
         return image_group, annotations_group
 
     def compute_targets(self, image_group, annotations_group):
         return np.concatenate(annotations_group, axis=0).squeeze(1)
+
+    def compute_input_output(self, group):
+        paths = self.image_names[group]
+        inputs, scales = super().compute_input_output(group)
+        return inputs, paths, scales
