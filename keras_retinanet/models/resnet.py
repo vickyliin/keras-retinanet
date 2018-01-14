@@ -50,7 +50,7 @@ def download_imagenet(backbone):
     )
 
 
-def resnet_retinanet(num_classes, backbone=50, inputs=None, weights='imagenet', **kwargs):
+def resnet_retinanet(num_classes, backbone=50, bbox=True, inputs=None, weights='imagenet', **kwargs):
     allowed_backbones = [50, 101, 152]
     if backbone not in allowed_backbones:
         raise ValueError('Backbone (\'{}\') not in allowed backbones ({}).'.format(backbone, allowed_backbones))
@@ -76,13 +76,18 @@ def resnet_retinanet(num_classes, backbone=50, inputs=None, weights='imagenet', 
         resnet = keras_resnet.models.ResNet152(inputs, include_top=False, freeze_bn=True)
 
     # create the full model
-    model = retinanet.retinanet_bbox(inputs=inputs, num_classes=num_classes, backbone=resnet, **kwargs)
+    if bbox:
+        model = retinanet.retinanet_bbox(inputs=inputs, num_classes=num_classes, backbone=resnet, **kwargs)
+        output = model
+    else:
+        model, anchors = retinanet.retinanet(inputs=inputs, num_classes=num_classes, backbone=resnet, **kwargs)
+        output = model, anchors
 
     # optionally load weights
     if weights_path:
         model.load_weights(weights_path, by_name=True)
 
-    return model
+    return output
 
 
 def resnet50_retinanet(num_classes, inputs=None, weights='imagenet', **kwargs):

@@ -195,24 +195,22 @@ def retinanet(
     pyramid = __build_pyramid(submodels, features)
     anchors = __build_anchors(anchor_parameters, features)
 
-    return keras.models.Model(inputs=inputs, outputs=[anchors] + pyramid, name=name)
+    return keras.models.Model(inputs=inputs, outputs=pyramid, name=name), anchors
 
 
 def retinanet_bbox(inputs, num_classes, nms=True, name='retinanet-bbox', *args, **kwargs):
-    model = retinanet(inputs=inputs, num_classes=num_classes, *args, **kwargs)
+    model, anchors = retinanet(inputs=inputs, num_classes=num_classes, *args, **kwargs)
 
     # we expect the anchors, regression and classification values as first output
-    anchors        = model.outputs[0]
-    regression     = model.outputs[1]
-    classification = model.outputs[2]
+    regression, classification = model.outputs
 
     # apply predicted regression to anchors
     boxes      = layers.RegressBoxes(name='boxes')([anchors, regression])
-    detections = keras.layers.Concatenate(axis=2)([boxes, classification] + model.outputs[3:])
+    detections = keras.layers.Concatenate(axis=2, name='detections')([boxes, classification])
 
     # additionally apply non maximum suppression
     if nms:
         detections = layers.NonMaximumSuppression(name='nms')([boxes, classification, detections])
 
     # construct the model
-    return keras.models.Model(inputs=inputs, outputs=model.outputs[1:] + [detections], name=name)
+    return keras.models.Model(inputs=inputs, outputs=model.outputs + [detections], name=name)
