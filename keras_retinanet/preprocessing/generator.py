@@ -144,7 +144,7 @@ class Generator(object):
             order.sort(key=lambda x: self.image_aspect_ratio(x))
 
         # divide into groups, one group = one batch
-        self.groups = [[order[x % len(order)] for x in range(i, i + self.batch_size)] for i in range(0, len(order), self.batch_size)]
+        self.groups = [order[i:i + self.batch_size] for i in range(0, len(order), self.batch_size)]
 
     def compute_inputs(self, image_group):
         # get the max image shape
