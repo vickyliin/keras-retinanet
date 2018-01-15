@@ -44,6 +44,7 @@ class Generator(object):
         self.shuffle_groups       = shuffle_groups
         self.image_min_side       = image_min_side
         self.image_max_side       = image_max_side
+        self.evaluate             = False
 
         if seed is None:
             seed = np.uint32((time.time() % 1)) * 1000
@@ -114,6 +115,7 @@ class Generator(object):
         return preprocess_image(image)
 
     def preprocess_group(self, image_group, annotations_group):
+        scales = np.zeros([len(image_group)])
         for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
             # preprocess the image (subtract imagenet mean)
             image = self.preprocess_image(image)
@@ -132,8 +134,12 @@ class Generator(object):
             # copy processed data back to group
             image_group[index]       = image
             annotations_group[index] = annotations
+            scales[index]            = image_scale
 
-        return image_group, annotations_group
+        if self.evaluate:
+            return image_group, scales, annotations_group
+        else:
+            return image_group, annotations_group
 
     def group_images(self):
         # determine the order of the images
@@ -173,6 +179,7 @@ class Generator(object):
 
     def compute_targets(self, image_group, annotations_group):
         # get the max image shape
+        if self.evaluate: return annotations_group
         max_shape = tuple(max(image.shape[x] for image in image_group) for x in range(3))
 
         # compute labels and regression targets
@@ -204,7 +211,11 @@ class Generator(object):
         image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
 
         # perform preprocessing steps
-        image_group, annotations_group = self.preprocess_group(image_group, annotations_group)
+        groups = self.preprocess_group(image_group, annotations_group)
+        if self.evaluate:
+            image_group, scales, annotations_group = groups
+        else:
+            image_group, annotations_group = groups
 
         # compute network inputs
         inputs = self.compute_inputs(image_group)
@@ -212,7 +223,10 @@ class Generator(object):
         # compute network targets
         targets = self.compute_targets(image_group, annotations_group)
 
-        return inputs, targets
+        if self.evaluate:
+            return inputs, scales, targets
+        else:
+            return inputs, targets
 
     def __next__(self):
         return self.next()
