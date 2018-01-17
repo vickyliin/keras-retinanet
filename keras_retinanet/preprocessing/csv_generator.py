@@ -60,10 +60,9 @@ def _read_annotations(csv_reader, classes, base_dir=None):
     base_dir = base_dir or ''
     result = {}
     for line, row in enumerate(csv_reader):
-        try:
-            img_file, x1, y1, x2, y2, class_name = row[:6]
-        except ValueError:
-            raise_from(ValueError('line {}: format should be \'img_file,x1,y1,x2,y2,class_name\' or \'img_file,,,,,\''.format(line)), None)
+        img_file, x1, y1, x2, y2, class_name = row[:6]
+        score = 1
+        if len(row) > 6: score = float(row[6])
 
         img_file = os.path.join(base_dir, img_file)
         if img_file not in result:
@@ -88,7 +87,7 @@ def _read_annotations(csv_reader, classes, base_dir=None):
         if class_name not in classes:
             raise ValueError('line {}: unknown class name: {}'.format(line, class_name))
 
-        result[img_file].append({'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class': class_name})
+        result[img_file].append({'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'score': score, 'class': class_name})
     return result
 
 
@@ -99,6 +98,9 @@ def _open_for_csv(path):
     This is different for python2 it means with mode 'rb',
     for python3 this means 'r' with "universal newlines".
     """
+    if hasattr(path, 'readlines'):
+        return path.readlines()
+
     if sys.version_info[0] < 3:
         return open(path, 'rb')
     else:
@@ -111,6 +113,7 @@ class CSVGenerator(Generator):
         *csv_data_files,
         csv_class_file,
         base_dirs=None,
+        sep=',',
         **kwargs
     ):
         self.image_names = []
@@ -120,9 +123,10 @@ class CSVGenerator(Generator):
 
         # parse the provided class file
         try:
-            with _open_for_csv(csv_class_file) as file:
-                self.classes = _read_classes(csv.reader(file, delimiter=','))
+            file = _open_for_csv(csv_class_file)
+            self.classes = _read_classes(csv.reader(file, delimiter=','))
         except ValueError as e:
+            raise ValueError(e)
             raise_from(ValueError('invalid CSV class file: {}: {}'.format(csv_class_file, e)), None)
 
         self.labels = {}
@@ -132,9 +136,9 @@ class CSVGenerator(Generator):
         # csv with img_path, x1, y1, x2, y2, class_name
         for csv_data_file, base_dir in zip(csv_data_files, base_dirs):
             try:
-                with _open_for_csv(csv_data_file) as file:
-                    image_data = _read_annotations(csv.reader(file, delimiter=','), self.classes, base_dir)
-                    self.image_data.update(image_data)
+                file = _open_for_csv(csv_data_file)
+                image_data = _read_annotations(csv.reader(file, delimiter=sep), self.classes, base_dir)
+                self.image_data.update(image_data)
             except ValueError as e:
                 raise_from(ValueError('invalid CSV annotations file: {}: {}'.format(csv_data_file, e)), None)
         self.image_names = list(self.image_data.keys())
@@ -156,7 +160,7 @@ class CSVGenerator(Generator):
     def load_annotations(self, image_index):
         path   = self.image_names[image_index]
         annots = self.image_data[path]
-        boxes  = np.zeros((len(annots), 5))
+        boxes  = np.zeros((len(annots), 6))
 
         for idx, annot in enumerate(annots):
             class_name = annot['class']
@@ -165,5 +169,6 @@ class CSVGenerator(Generator):
             boxes[idx, 2] = float(annot['x2'])
             boxes[idx, 3] = float(annot['y2'])
             boxes[idx, 4] = self.name_to_label(class_name)
+            boxes[idx, 5] = float(annot['score'])
 
         return boxes

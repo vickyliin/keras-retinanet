@@ -32,10 +32,11 @@ class Generator(object):
     def __init__(
         self,
         batch_size,
-        group_method,  # one of 'none', 'random', 'ratio'
         image_min_side,
         image_max_side,
+        group_method='random',  # one of 'none', 'random', 'ratio'
         shuffle_groups=True,
+        thresh=0,
         seed=None
     ):
         self.batch_size           = int(batch_size)
@@ -43,6 +44,7 @@ class Generator(object):
         self.shuffle_groups       = shuffle_groups
         self.image_min_side       = image_min_side
         self.image_max_side       = image_max_side
+        self.thresh               = thresh
 
         if seed is None:
             seed = np.uint32((time.time() % 1)) * 1000
@@ -162,12 +164,13 @@ class Generator(object):
     def compute_inputs(self, group):
         image_group = self.load_image_group(group)
         image_group = self.preprocess_image_group(image_group)
+        batch_size = len(group)
 
         # get the max image shape
         max_shape = tuple(max(image.shape[x] for image in image_group.input) for x in range(3))
 
         # construct an image batch object
-        image_batch = np.zeros((self.batch_size,) + max_shape, dtype=keras.backend.floatx())
+        image_batch = np.zeros((batch_size,) + max_shape, dtype=keras.backend.floatx())
 
         # copy all images to the upper left part of the image batch object
         for image_index, image in enumerate(image_group.input):
@@ -190,8 +193,8 @@ class Generator(object):
         return anchor_targets_bbox(image_shape, boxes, num_classes, mask_shape, negative_overlap, positive_overlap, **kwargs)
 
     def compute_targets(self, group, image_group):
+        batch_size = len(group)
         annotations_group = self.load_annotations_group(group)
-        annotations_group = self.filter_annotations(image_group, annotations_group, group)
         annotations_group = self.preprocess_annotations_group(image_group, annotations_group)
         annotations_group = Namespace(annotations=annotations_group)
 
@@ -199,17 +202,21 @@ class Generator(object):
         max_shape = tuple(max(image.shape[x] for image in image_group.input) for x in range(3))
 
         # compute labels and regression targets
-        labels_group     = [None] * self.batch_size
-        regression_group = [None] * self.batch_size
+        labels_group     = [None] * batch_size
+        regression_group = [None] * batch_size
         for index, (image, annotations) in enumerate(zip(image_group.input, annotations_group.annotations)):
-            labels_group[index], regression_group[index] = self.anchor_targets(max_shape, annotations, self.num_classes(), mask_shape=image.shape)
+
+            ignore_box_ids = np.where(annotations[..., 5] < self.thresh)
+            labels_group[index], regression_group[index] = self.anchor_targets(max_shape, annotations, self.num_classes(), 
+                                                                               mask_shape=image.shape, 
+                                                                               ignore_box_ids=ignore_box_ids)
 
             # append anchor states to regression targets (necessary for filtering 'ignore', 'positive' and 'negative' anchors)
             anchor_states           = np.max(labels_group[index], axis=1, keepdims=True)
             regression_group[index] = np.append(regression_group[index], anchor_states, axis=1)
 
-        labels_batch     = np.zeros((self.batch_size,) + labels_group[0].shape, dtype=keras.backend.floatx())
-        regression_batch = np.zeros((self.batch_size,) + regression_group[0].shape, dtype=keras.backend.floatx())
+        labels_batch     = np.zeros((batch_size,) + labels_group[0].shape, dtype=keras.backend.floatx())
+        regression_batch = np.zeros((batch_size,) + regression_group[0].shape, dtype=keras.backend.floatx())
 
         # copy all labels and regression values to the batch blob
         for index, (labels, regression) in enumerate(zip(labels_group, regression_group)):

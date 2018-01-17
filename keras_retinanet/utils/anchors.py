@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import pdb
 import numpy as np
 
 
@@ -24,6 +25,7 @@ def anchor_targets_bbox(
     mask_shape=None,
     negative_overlap=0.4,
     positive_overlap=0.5,
+    ignore_box_ids=[],
     **kwargs
 ):
     anchors = anchors_for_shape(image_shape, **kwargs)
@@ -36,6 +38,7 @@ def anchor_targets_bbox(
         overlaps             = compute_overlap(anchors, boxes[:, :4])
         argmax_overlaps_inds = np.argmax(overlaps, axis=1)
         max_overlaps         = overlaps[np.arange(overlaps.shape[0]), argmax_overlaps_inds]
+        max_overlaps[np.where(np.isin(argmax_overlaps_inds, ignore_box_ids))] = 0.5 * (positive_overlap + negative_overlap)
 
         # assign bg labels first so that positive labels can clobber them
         labels[max_overlaps < negative_overlap, :] = 0
@@ -47,7 +50,9 @@ def anchor_targets_bbox(
         # fg label: above threshold IOU
         positive_indices = max_overlaps >= positive_overlap
         labels[positive_indices, :] = 0
-        labels[positive_indices, boxes[positive_indices, 4].astype(int)] = 1
+        positive_boxes_class = boxes[positive_indices, 4].astype(int)
+        labels[positive_indices, positive_boxes_class] = 1
+
     else:
         # no annotations? then everything is background
         labels[:] = 0
