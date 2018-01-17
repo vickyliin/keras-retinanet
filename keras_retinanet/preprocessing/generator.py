@@ -19,6 +19,7 @@ import random
 import threading
 import time
 import warnings
+from argparse import Namespace
 
 import keras
 from keras.preprocessing.image import ImageDataGenerator
@@ -35,16 +36,13 @@ class Generator(object):
         image_min_side,
         image_max_side,
         shuffle_groups=True,
-        image_data_generator=None,
         seed=None
     ):
-        self.image_data_generator = image_data_generator
         self.batch_size           = int(batch_size)
         self.group_method         = group_method
         self.shuffle_groups       = shuffle_groups
         self.image_min_side       = image_min_side
         self.image_max_side       = image_max_side
-        self.evaluate             = False
 
         if seed is None:
             seed = np.uint32((time.time() % 1)) * 1000
@@ -81,7 +79,7 @@ class Generator(object):
 
     def filter_annotations(self, image_group, annotations_group, group):
         # test all annotations
-        for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
+        for index, (image, annotations) in enumerate(zip(image_group.org, annotations_group)):
             assert(isinstance(annotations, np.ndarray)), '\'load_annotations\' should return a list of numpy arrays, received: {}'.format(type(annotations))
 
             # test x2 < x1 | y2 < y1 | x1 < 0 | y1 < 0 | x2 <= 0 | y2 <= 0 | x2 >= image.shape[1] | y2 >= image.shape[0]
@@ -103,7 +101,7 @@ class Generator(object):
                 ))
                 annotations_group[index] = np.delete(annotations, invalid_indices, axis=0)
 
-        return image_group, annotations_group
+        return annotations_group
 
     def load_image_group(self, group):
         return [self.load_image(image_index) for image_index in group]
@@ -114,32 +112,39 @@ class Generator(object):
     def preprocess_image(self, image):
         return preprocess_image(image)
 
-    def preprocess_group(self, image_group, annotations_group):
-        scales = np.zeros([len(image_group)])
-        for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
-            # preprocess the image (subtract imagenet mean)
-            image = self.preprocess_image(image)
-
-            # randomly transform both image and annotations
-            if self.image_data_generator:
-                image, annotations = random_transform(image, annotations, 
-                                                      self.image_data_generator)
-
+    def preprocess_image_group(self, image_group):
+        image_group = Namespace(
+            org=image_group,
+            path=[],
+            resized=[],
+            scale=[],
+            input=[]
+        )
+        for index, (path, org) in enumerate(image_group.org):
             # resize image
-            image, image_scale = self.resize_image(image)
+            resized, scale = self.resize_image(org)
 
-            # apply resizing to annotations too
-            annotations[:, :4] *= image_scale
+            # preprocess the image (subtract imagenet mean)
+            input = self.preprocess_image(resized)
 
             # copy processed data back to group
-            image_group[index]       = image
-            annotations_group[index] = annotations
-            scales[index]            = image_scale
+            image_group.org[index] = org
+            image_group.path.append(path)
+            image_group.resized.append(resized)
+            image_group.scale.append(scale)
+            image_group.input.append(input)
 
-        if self.evaluate:
-            return image_group, scales, annotations_group
-        else:
-            return image_group, annotations_group
+        return image_group
+
+    def preprocess_annotations_group(self, image_group, annotations_group):
+        for index, (scale, annotations) in enumerate(zip(image_group.scale, annotations_group)):
+            # apply resizing to annotations too
+            annotations[:, :4] *= scale
+
+            # copy processed data back to group
+            annotations_group[index] = annotations
+
+        return annotations_group
 
     def group_images(self):
         # determine the order of the images
@@ -150,20 +155,27 @@ class Generator(object):
             order.sort(key=lambda x: self.image_aspect_ratio(x))
 
         # divide into groups, one group = one batch
-        self.groups = [order[i:i + self.batch_size] for i in range(0, len(order), self.batch_size)]
+        groups = [order[i:i + self.batch_size] for i in range(0, len(order), self.batch_size)]
+        self.groups = np.array(groups, dtype=np.object)
+        self.indices = list(range(len(self.groups)))
 
-    def compute_inputs(self, image_group):
+    def compute_inputs(self, group):
+        image_group = self.load_image_group(group)
+        image_group = self.preprocess_image_group(image_group)
+
         # get the max image shape
-        max_shape = tuple(max(image.shape[x] for image in image_group) for x in range(3))
+        max_shape = tuple(max(image.shape[x] for image in image_group.input) for x in range(3))
 
         # construct an image batch object
         image_batch = np.zeros((self.batch_size,) + max_shape, dtype=keras.backend.floatx())
 
         # copy all images to the upper left part of the image batch object
-        for image_index, image in enumerate(image_group):
+        for image_index, image in enumerate(image_group.input):
             image_batch[image_index, :image.shape[0], :image.shape[1], :image.shape[2]] = image
 
-        return image_batch
+        image_group.input = image_batch
+
+        return image_group
 
     def anchor_targets(
         self,
@@ -177,15 +189,19 @@ class Generator(object):
     ):
         return anchor_targets_bbox(image_shape, boxes, num_classes, mask_shape, negative_overlap, positive_overlap, **kwargs)
 
-    def compute_targets(self, image_group, annotations_group):
+    def compute_targets(self, group, image_group):
+        annotations_group = self.load_annotations_group(group)
+        annotations_group = self.filter_annotations(image_group, annotations_group, group)
+        annotations_group = self.preprocess_annotations_group(image_group, annotations_group)
+        annotations_group = Namespace(annotations=annotations_group)
+
         # get the max image shape
-        if self.evaluate: return annotations_group
-        max_shape = tuple(max(image.shape[x] for image in image_group) for x in range(3))
+        max_shape = tuple(max(image.shape[x] for image in image_group.input) for x in range(3))
 
         # compute labels and regression targets
         labels_group     = [None] * self.batch_size
         regression_group = [None] * self.batch_size
-        for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
+        for index, (image, annotations) in enumerate(zip(image_group.input, annotations_group.annotations)):
             labels_group[index], regression_group[index] = self.anchor_targets(max_shape, annotations, self.num_classes(), mask_shape=image.shape)
 
             # append anchor states to regression targets (necessary for filtering 'ignore', 'positive' and 'negative' anchors)
@@ -200,33 +216,10 @@ class Generator(object):
             labels_batch[index, ...]     = labels
             regression_batch[index, ...] = regression
 
-        return [regression_batch, labels_batch]
+        annotations_group.regression = regression_batch
+        annotations_group.labels = labels_batch
 
-    def compute_input_output(self, group):
-        # load images and annotations
-        image_group       = self.load_image_group(group)
-        annotations_group = self.load_annotations_group(group)
-
-        # check validity of annotations
-        image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
-
-        # perform preprocessing steps
-        groups = self.preprocess_group(image_group, annotations_group)
-        if self.evaluate:
-            image_group, scales, annotations_group = groups
-        else:
-            image_group, annotations_group = groups
-
-        # compute network inputs
-        inputs = self.compute_inputs(image_group)
-
-        # compute network targets
-        targets = self.compute_targets(image_group, annotations_group)
-
-        if self.evaluate:
-            return inputs, scales, targets
-        else:
-            return inputs, targets
+        return annotations_group
 
     def __next__(self):
         return self.next()
@@ -236,8 +229,21 @@ class Generator(object):
         with self.lock:
             if self.group_index == 0 and self.shuffle_groups:
                 # shuffle groups at start of epoch
-                random.shuffle(self.groups)
-            group = self.groups[self.group_index]
+                random.shuffle(self.indices)
+            group = self.groups[self.indices[self.group_index]]
             self.group_index = (self.group_index + 1) % len(self.groups)
 
-        return self.compute_input_output(group)
+        image_group = self.compute_inputs(group)
+        annotations_group = self.compute_targets(group, image_group)
+        inputs = image_group.input
+        targets = [annotations_group.regression, annotations_group.labels]
+        return inputs, targets
+
+    def iterate_once(self, get_annotations=True):
+        for group in self.groups:
+            image_group = self.compute_inputs(group)
+            if get_annotations:
+                annotations_group = self.compute_targets(group, image_group)
+                yield image_group, annotations_group
+            else:
+                yield image_group
